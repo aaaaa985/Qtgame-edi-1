@@ -4,6 +4,12 @@
 GameWidget::GameWidget(QWidget *parent)
     : QWidget{parent}
 {
+    //加载背景图片
+    backgroundImage=QPixmap(":/images/background.png");
+    if(backgroundImage.isNull()){
+        qDebug()<<"Failed to load background image";
+    }
+
 
 
     timer=new QTimer(this);
@@ -14,34 +20,88 @@ GameWidget::GameWidget(QWidget *parent)
 
 
     //初始化一些目标
-    for(int i=0;i<5;++i){
+    for(int i=0;i<6;i++){
         Target target;
-        while(isOverlapping(target.getRect(),targets,obstacles,character,healingPoints)){
-            target.position.setX(rand()%600+100);
-            target.position.setY(rand()%240+20);
+        int retryCount=0;
+        do{
+            target.position.setX(rand()%800+100);
+            target.position.setY(rand()%440+20);
+        }while(isOverlapping(target.getRect(),targets,obstacles,character,healingPoints,portals)&&++retryCount<500);
+        if(retryCount<500){
+            targets.append(target);
         }
-        targets.append(target);
+        else{
+            qDebug()<<"Target"<<i<<"placement failed!";
+        }
     }
 
     //初始化一些障碍
-    for(int i=0;i<6;i++){
+    for(int i=0;i<8;i++){
         Obstacle obstacle;
-        while(isOverlapping(obstacle.getRect(),targets,obstacles,character,healingPoints)){
-            obstacle.position.setX(rand()%600+100);
-            obstacle.position.setY(rand()%200+20);
+        int retryCount=0;
+        do{
+            obstacle.position.setX(rand()%800+100);
+            obstacle.position.setY(rand()%440+20);
+        }while(isOverlapping(obstacle.getRect(),targets,obstacles,character,healingPoints,portals)&&++retryCount<500);
+        if(retryCount<500){
+            obstacles.append(obstacle);
         }
-        obstacles.append(obstacle);
+        else{
+            qDebug()<<"Obstacle"<<i<<"placement failed!";
+        }
     }
 
     //初始化回血点
-    for(int i=0;i<3;i++){
+    for(int i=0;i<5;i++){
         HealingPoint healingPoint;
-        while (isOverlapping(healingPoint.getRect(),targets,obstacles,character,healingPoints)){
-            healingPoint.position.setX(rand()%600+100);
-            healingPoint.position.setY(rand()%240+20);
+        int retryCount=0;
+        do{
+            healingPoint.position.setX(rand()%800+100);
+            healingPoint.position.setY(rand()%440+20);
+        }while (isOverlapping(healingPoint.getRect(),targets,obstacles,character,healingPoints,portals)&&++retryCount<500);
+        if(retryCount<500){
+            healingPoints.append(healingPoint);
         }
-        healingPoints.append(healingPoint);
+        else{
+            qDebug()<<"HealingPoint"<<i<<"placement failed!";
+        }
     }
+
+    //初始化穿梭门
+    qDeleteAll(portals);//先释放对象
+    portals.clear();//再清空指针列表
+    int maxRetries=1000;
+
+    for(int i=0;i<4;i++){
+        Portal* portal=new Portal();
+        int retryCount=0;
+        bool validPosition=false;
+
+        do{
+            portal->position.setX(rand()%800+100);
+            portal->position.setY(rand()%440+20);
+            validPosition=!isOverlapping(portal->getRect(),targets,obstacles,character,healingPoints,portals);
+            retryCount++;
+        }while(!validPosition&&retryCount<maxRetries);
+        if(validPosition){
+            portals.append(portal);
+        }
+        else{
+            qDebug()<<"Portal"<<i<<"placement failed after"<<retryCount<<"attemps";
+            delete portal;
+        }
+    }
+    //配对门
+    if(portals.size()>=4){
+        portals.at(0)->pairedPortal=portals.at(1);
+        portals.at(1)->pairedPortal=portals.at(0);
+        portals.at(2)->pairedPortal=portals.at(3);
+        portals.at(3)->pairedPortal=portals.at(2);
+    }
+    else{
+        qDebug()<<"Warning:Not enough portals for pairing!";
+    }
+
 
     gameOver=false;
 
@@ -53,6 +113,8 @@ GameWidget::GameWidget(QWidget *parent)
 
 GameWidget::~GameWidget(){
     delete timer;
+    qDeleteAll(portals);
+    portals.clear();
 }
 
 void GameWidget::paintEvent(QPaintEvent *event){
@@ -60,26 +122,70 @@ void GameWidget::paintEvent(QPaintEvent *event){
     QPainter painter(this);
 
 
+    //绘制背景图片
+    if(!backgroundImage.isNull()) {
+        QPixmap scaledImage = backgroundImage.scaled(rect().size(), Qt::KeepAspectRatioByExpanding);
+        painter.drawPixmap(rect(), scaledImage);
+    }
+
+
     //绘制人物
-    painter.setBrush(Qt::blue);
-    painter.drawRect(character.position.x(),character.position.y(),25,50);
+    if(!character.image.isNull()){
+
+        painter.drawPixmap(character.position.x(),character.position.y(),character.image);
+        if(character.isHit){
+            if(character.hitFramesLeft%2==0){
+                painter.setPen(QPen(Qt::red,2));
+                painter.drawRect(character.getRect());
+            }
+        }
+        else if(character.isHealing){
+            if(character.healFramesLeft%2==0){
+                painter.setPen(QPen(Qt::green,2));
+                painter.drawRect(character.getRect());
+                if(!character.plusIcon.isNull()){
+                    painter.drawPixmap(character.position.x()+character.image.width(),character.position.y(),character.plusIcon);
+
+                }
+            }
+        }
+
+
+    }
     //绘制目标
-    painter.setBrush(Qt::yellow);
     for(const auto &target:targets){
-        painter.drawRect(target.position.x(),target.position.y(),20,20);
+        if(!target.image.isNull()){
+            painter.drawPixmap(target.position.x(),target.position.y(),target.image);
+            if(target.isHit){
+                if(target.hitFramesLeft%2==0){
+                    painter.setPen(QPen(Qt::red,2));
+                    painter.drawRect(target.getRect());
+                }
+            }
+        }
     }
 
     //绘制障碍
-    painter.setBrush(Qt::red);
     for(const auto &obstacle:obstacles){
-        painter.drawRect(obstacle.position.x(),obstacle.position.y(),obstacle.width,obstacle.height);
+        if(!obstacle.image.isNull()){
+            painter.drawPixmap(obstacle.position.x(),obstacle.position.y(),obstacle.image);
+        }
     }
 
     //绘制回血点
-    painter.setBrush(Qt::green);
     for(const auto &healingPoint:healingPoints){
-        painter.drawRect(healingPoint.position.x(),healingPoint.position.y(),healingPoint.width,healingPoint.height);
+        if(!healingPoint.image.isNull()){
+            painter.drawPixmap(healingPoint.position.x(),healingPoint.position.y(),healingPoint.image);
+        }
     }
+
+    //绘制穿梭门
+    for(const auto &portal:portals){
+        if(portal&&!portal->image.isNull()){
+            painter.drawPixmap(portal->position.x(),portal->position.y(),portal->image);
+        }
+    }
+
 
 
 
@@ -87,19 +193,27 @@ void GameWidget::paintEvent(QPaintEvent *event){
     if(gameOver){
         painter.setFont(QFont("Impact",100));
         painter.setPen(QColor(0,0,0,128));//半透明黑色
-        painter.drawText(rect().translated(5,5),Qt::AlignCenter,character.health<=0?"Lose":"Win!");
+        painter.drawText(rect().translated(5,5),Qt::AlignCenter,character.health<=0?"Lose":"Pass");
         painter.setPen(Qt::red);
         if(character.health<=0){
             painter.drawText(rect(),Qt::AlignCenter,"Lose");
         }
         else{
-            painter.drawText(rect(),Qt::AlignCenter,"Win!");
+            painter.drawText(rect(),Qt::AlignCenter,"Pass");
         }
     }
 }
 
 void GameWidget::keyPressEvent(QKeyEvent *event){
     QPointF newPosition=character.position;
+    bool shiftPressed=event->modifiers()&Qt::ShiftModifier;
+    qDebug()<<"Shift key pressed: "<<shiftPressed;
+    if(shiftPressed){
+        character.setBoostSpeed();
+    }
+    else{
+        character.resetSpeed();
+    }
     switch(event->key()){
     case Qt::Key_Left:
         newPosition.rx()-=character.speed;
@@ -143,6 +257,7 @@ void GameWidget::keyPressEvent(QKeyEvent *event){
             collision =true;
             if(character.health>0){
                 character.health--;
+                character.startHitEffect();
             }
             break;
         }
@@ -152,6 +267,7 @@ void GameWidget::keyPressEvent(QKeyEvent *event){
         if(isCollisionWithHealingPoint(tempCharacter,*it)){
             if(character.health<10){
                 character.health++;
+                character.startHealEffect();
             }
             it=healingPoints.erase(it);
         }
@@ -159,6 +275,16 @@ void GameWidget::keyPressEvent(QKeyEvent *event){
             ++it;
         }
     }
+
+    for(auto* portal:portals){
+        if(portal&&isCollisionWithPortal(tempCharacter,*portal)){
+            if(portal->pairedPortal){
+                character.position=portal->pairedPortal->position;
+            }
+            break;
+        }
+    }
+
     if(!collision){
         character.position=newPosition;
     }
@@ -171,7 +297,7 @@ void GameWidget::keyPressEvent(QKeyEvent *event){
 }
 
 
-bool GameWidget::isOverlapping(const QRectF& rect,const QList<Target>& targets,const QList<Obstacle>& obstacles,const Character& character,const QList<HealingPoint>& healingPoints){
+bool GameWidget::isOverlapping(const QRectF& rect,const QList<Target>& targets,const QList<Obstacle>& obstacles,const Character& character,const QList<HealingPoint>& healingPoints,const QList<Portal*>& portals){
     if(rect.intersects(character.getRect())){
         return true;
     }
@@ -190,6 +316,11 @@ bool GameWidget::isOverlapping(const QRectF& rect,const QList<Target>& targets,c
             return true;
         }
     }
+    for(const auto& portal:portals){
+        if(portal&&rect.intersects(portal->getRect())){
+            return true;
+        }
+    }
     return false;
 }
 
@@ -204,6 +335,24 @@ void GameWidget::updateGame(){
         if(obstacle.position.x()<0||obstacle.position.x()+obstacle.width>width()||obstacle.position.y()<0||obstacle.position.y()+obstacle.height>height()){
             obstacle.changeDirection();
         }
+    }
+
+
+    for(auto& target:targets){
+        target.move();
+        target.updateEffects();//更新目标受击效果
+
+        //处理目标碰到边界的情况
+        if(target.position.x()<0||target.position.x()+target.image.width()||target.position.y()<0||target.position.y()+target.image.height()){
+            target.changeDirection();
+        }
+    }
+
+
+    character.updateEffects();//更新人物效果
+
+    for(auto& target:targets){
+        target.updateEffects();//确保目标状态更新
     }
 
     if(targets.empty()){
@@ -226,20 +375,35 @@ bool GameWidget::isCollision(const Character &character,const Target &target){
 bool GameWidget::isCollisionWithObstacle(const Character &character,const Obstacle &obstacle){
     QRectF charRect(character.position.x(),character.position.y(),25,50);
     QRectF obstacleRect(obstacle.position.x(),obstacle.position.y(),60,60);
-    return charRect.intersects(obstacleRect);
+    bool collision=charRect.intersects(obstacleRect);
+    if(collision){
+        qDebug()<<"Collision with obstacle detected!";
+    }
+    return collision;
 }
 
 bool GameWidget::isCollisionWithHealingPoint(const Character &character,const HealingPoint &healingPoint){
     QRectF charRect(character.position.x(),character.position.y(),25,50);
     QRectF healingPointRect(healingPoint.position.x(),healingPoint.position.y(),healingPoint.width,healingPoint.height);
-    return charRect.intersects(healingPointRect);
+    bool collision=charRect.intersects(healingPointRect);
+    if(collision){
+        qDebug()<<"Collision with healing point detected!";
+    }
+    return collision;
+}
+
+bool GameWidget::isCollisionWithPortal(const Character &character,const Portal &portal){
+    QRectF charRect(character.position.x(),character.position.y(),25,50);
+    QRectF portalRect(portal.position.x(),portal.position.y(),portal.image.width(),portal.image.height());
+    return charRect.intersects(portalRect);
 }
 
 void GameWidget::handleAttack(){
     QRectF attackRect=character.getAttackRect();
     for(auto it=targets.begin();it!=targets.end();){
         if(attackRect.intersects(it->getRect())){
-            it->health-=100;
+            it->health-=1;
+            it->startHitEffect();
             if(it->health<=0){
                 it=targets.erase(it);
             }
@@ -253,6 +417,7 @@ void GameWidget::handleAttack(){
     }
     character.isAttacking=false;
 }
+
 
 
 
