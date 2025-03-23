@@ -8,6 +8,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
     gameWidget=new GameWidget(this);
     setCentralWidget(gameWidget);
+    resize(1000,600);
 }
 
 MainWindow::~MainWindow()
